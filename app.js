@@ -563,8 +563,6 @@ document.addEventListener('click', (e) => {
     if(!portalUserSearch.contains(e.target)) searchResultsBox.classList.add('hidden');
     if(!portalUserSearchMobile.contains(e.target)) searchResultsBoxMobile.classList.add('hidden');
 });
-
-// ... (HTML ve Akış listeleme motorlarının devamı bir sonraki adımda tam JS entegrasyonuyla bağlanacaktır.) ...
 // ============================================================================
 // GÖNDERİ OLUŞTURMA VE AKIŞ (FEED) MOTORU
 // ============================================================================
@@ -931,4 +929,341 @@ async function showLikesModal(postId) {
     likesList.innerHTML = '<p class="text-center text-slate-400 mt-4"><i class="fa-solid fa-spinner fa-spin text-xl mb-2"></i></p>';
     try {
         const { data } = await supabase.from('etkilesimler').select('user_id, uyeler(ad_soyad, avatar_url, rol)').eq('gonderi_id', postId).eq('etkilesim_tipi', 'like');
-        if(!data || data.length === 0) { likesList.innerHTML = '<p class="text-center text-sm text-slate-500 mt-4">Beğeni
+        if(!data || data.length === 0) { likesList.innerHTML = '<p class="text-center text-sm text-slate-500 mt-4">Beğeni yok.</p>'; return; }
+        likesList.innerHTML = '';
+        data.forEach(l => likesList.insertAdjacentHTML('beforeend', `<div class="flex items-center gap-3 p-2 border-b border-slate-100 cursor-pointer hover:bg-slate-50 user-profile-trigger" data-user-id="${l.user_id}" onclick="document.getElementById('close-likes-modal-btn').click();"><img src="${l.uyeler.avatar_url || 'https://via.placeholder.com/150'}" class="w-8 h-8 rounded-full object-cover pointer-events-none"><div class="pointer-events-none"><p class="font-bold text-sm text-slate-800">${l.uyeler.ad_soyad}</p></div></div>`));
+    } catch (e) {}
+}
+closeLikesModalBtn.addEventListener('click', () => likesModal.classList.add('hidden'));
+
+// ============================================================================
+// INSTAGRAM PROFİLİ & TAKİP SİSTEMİ
+// ============================================================================
+tabGrid.addEventListener('click', () => {
+    tabGrid.className = "flex-1 py-2.5 border-b-2 border-slate-800 text-slate-800 flex justify-center transition-all";
+    tabQuestions.className = "flex-1 py-2.5 border-b-2 border-transparent text-slate-400 flex justify-center transition-all";
+    upGrid.classList.remove('hidden'); upQuestionsList.classList.add('hidden');
+});
+
+tabQuestions.addEventListener('click', () => {
+    tabQuestions.className = "flex-1 py-2.5 border-b-2 border-slate-800 text-slate-800 flex justify-center transition-all";
+    tabGrid.className = "flex-1 py-2.5 border-b-2 border-transparent text-slate-400 flex justify-center transition-all";
+    upGrid.classList.add('hidden'); upQuestionsList.classList.remove('hidden');
+});
+
+window.openUserProfile = async (uId) => {
+    currentlyViewingProfileId = uId;
+    userProfileModal.classList.remove('hidden'); 
+    setTimeout(() => userProfileModal.classList.remove('translate-x-full'), 10);
+    tabGrid.click();
+
+    upGrid.innerHTML = '<div class="col-span-3 text-center p-10"><i class="fa-solid fa-spinner fa-spin text-2xl text-slate-400"></i></div>';
+    upQuestionsList.innerHTML = '<div class="text-center p-10"><i class="fa-solid fa-spinner fa-spin text-2xl text-slate-400"></i></div>';
+
+    try {
+        const { data: user } = await supabase.from('uyeler').select('*').eq('id', uId).single();
+        upHeaderName.innerText = user.ad_soyad; upName.innerText = user.ad_soyad; upRole.innerText = user.rol; upBio.innerText = user.biyografi || '';
+        const userAvatar = user.avatar_url || 'https://via.placeholder.com/150';
+        upAvatar.src = userAvatar;
+
+        if (uId === currentUserSession.user.id) { 
+            followBtn.classList.add('hidden'); unfollowBtn.classList.add('hidden'); messageUserBtn.classList.add('hidden');
+        } else {
+            messageUserBtn.classList.remove('hidden');
+            messageUserBtn.onclick = () => {
+                userProfileModal.classList.add('translate-x-full');
+                setTimeout(() => userProfileModal.classList.add('hidden'), 300);
+                openChat(uId, user.ad_soyad, userAvatar);
+            };
+
+            const { data: follow } = await supabase.from('takipler').select('id').eq('takip_eden_id', currentUserSession.user.id).eq('takip_edilen_id', uId).single();
+            if (follow) { followBtn.classList.add('hidden'); unfollowBtn.classList.remove('hidden'); } 
+            else { unfollowBtn.classList.add('hidden'); followBtn.classList.remove('hidden'); }
+        }
+
+        const { count: fer } = await supabase.from('takipler').select('*', { count: 'exact', head: true }).eq('takip_edilen_id', uId);
+        const { count: fing } = await supabase.from('takipler').select('*', { count: 'exact', head: true }).eq('takip_eden_id', uId);
+        upFollowerCount.innerText = fer || 0; upFollowingCount.innerText = fing || 0;
+
+        const { data: posts } = await supabase.from('gonderiler').select(`*, yazar:uyeler(ad_soyad, avatar_url, rol), etkilesimler(id, user_id), gonderi_yorumlari(id, metin, created_at, user_id, ust_yorum_id, yazar:uyeler(ad_soyad, avatar_url, rol))`).eq('user_id', uId).order('created_at', { ascending: false });
+        upPostCount.innerText = posts ? posts.length : 0;
+        upGrid.innerHTML = ''; upQuestionsList.innerHTML = '';
+
+        if(posts) {
+            posts.forEach(p => {
+                if (p.gonderi_tipi === 'medya') {
+                    let content = p.medya_url.endsWith('.mp4') ? '<div class="absolute inset-0 bg-black flex items-center justify-center text-white"><i class="fa-solid fa-play"></i></div>' : `<img src="${p.medya_url}" class="w-full h-full object-cover">`;
+                    upGrid.insertAdjacentHTML('beforeend', `<div class="aspect-square relative cursor-pointer border border-white" onclick="openSinglePost(${p.id})">${content}</div>`);
+                } 
+                else { upQuestionsList.insertAdjacentHTML('beforeend', generatePostHTML(p, false)); }
+            });
+            if(upGrid.innerHTML === '') upGrid.innerHTML = '<div class="col-span-3 text-center p-10 text-sm text-slate-400">Medya gönderisi yok.</div>';
+            if(upQuestionsList.innerHTML === '') upQuestionsList.innerHTML = '<p class="text-center text-sm text-slate-400 p-10">Soru gönderisi yok.</p>';
+        }
+    } catch(e) {}
+};
+
+document.addEventListener('click', async (e) => {
+    const trig = e.target.closest('.user-profile-trigger');
+    if (!trig) return;
+    const uId = trig.getAttribute('data-user-id');
+    if (uId) openUserProfile(uId);
+});
+
+closeUserProfileBtn.addEventListener('click', () => { userProfileModal.classList.add('translate-x-full'); setTimeout(() => userProfileModal.classList.add('hidden'), 300); });
+
+followBtn.addEventListener('click', async () => {
+    await supabase.from('takipler').insert([{ takip_eden_id: currentUserSession.user.id, takip_edilen_id: currentlyViewingProfileId }]);
+    await supabase.from('bildirimler').insert([{ alici_id: currentlyViewingProfileId, gonderen_id: currentUserSession.user.id, mesaj: 'Seni takip etmeye başladı.' }]);
+    followBtn.classList.add('hidden'); unfollowBtn.classList.remove('hidden'); upFollowerCount.innerText = parseInt(upFollowerCount.innerText)+1;
+});
+unfollowBtn.addEventListener('click', async () => {
+    await supabase.from('takipler').delete().eq('takip_eden_id', currentUserSession.user.id).eq('takip_edilen_id', currentlyViewingProfileId);
+    unfollowBtn.classList.add('hidden'); followBtn.classList.remove('hidden'); upFollowerCount.innerText = parseInt(upFollowerCount.innerText)-1;
+});
+
+// --- TEKİL GÖNDERİ MODALI ---
+window.openSinglePost = async (postId) => {
+    singlePostModal.classList.remove('hidden'); setTimeout(() => singlePostModal.classList.remove('translate-x-full'), 10);
+    singlePostContainer.innerHTML = '<div class="text-center mt-20"><i class="fa-solid fa-spinner fa-spin text-3xl text-slate-400 mb-2"></i></div>';
+    try {
+        const { data: post } = await supabase.from('gonderiler').select(`*, yazar:uyeler(ad_soyad, avatar_url, rol), etkilesimler(id, user_id), gonderi_yorumlari(id, metin, created_at, user_id, ust_yorum_id, yazar:uyeler(ad_soyad, avatar_url, rol))`).eq('id', postId).single();
+        singlePostContainer.innerHTML = generatePostHTML(post, true);
+    } catch (e) {}
+};
+closeSinglePostBtn.addEventListener('click', () => { singlePostModal.classList.add('translate-x-full'); setTimeout(() => singlePostModal.classList.add('hidden'), 300); });
+
+// ============================================================================
+// DM MESAJLAŞMA (INBOX & SOHBET EKRANI)
+// ============================================================================
+async function checkMessagesBadge() {
+    if (!currentUserSession) return;
+    try {
+        const { count } = await supabase.from('mesajlar').select('*', { count: 'exact', head: true }).eq('alici_id', currentUserSession.user.id).eq('okundu', false);
+        if (count > 0) messagesBadge.classList.remove('hidden'); else messagesBadge.classList.add('hidden');
+    } catch (error) {}
+}
+
+portalMessagesBtn.addEventListener('click', () => {
+    messagesListModal.classList.remove('hidden');
+    setTimeout(() => messagesListModal.classList.remove('translate-x-full'), 10);
+    loadConversations();
+});
+
+closeMessagesListModalBtn.addEventListener('click', () => {
+    messagesListModal.classList.add('translate-x-full');
+    setTimeout(() => messagesListModal.classList.add('hidden'), 300);
+});
+
+async function loadConversations() {
+    conversationsList.innerHTML = '<div class="text-center text-slate-400 mt-10"><i class="fa-solid fa-spinner fa-spin text-2xl mb-2"></i></div>';
+    try {
+        const { data: msgs, error } = await supabase.from('mesajlar').select('*, gonderen:uyeler!gonderen_id(id, ad_soyad, avatar_url), alici:uyeler!alici_id(id, ad_soyad, avatar_url)').or(`gonderen_id.eq.${currentUserSession.user.id},alici_id.eq.${currentUserSession.user.id}`).order('created_at', { ascending: false });
+        if (error) throw error;
+        if (!msgs || msgs.length === 0) { conversationsList.innerHTML = '<p class="text-center mt-10 text-slate-500 text-sm">Mesaj kutunuz boş.</p>'; return; }
+
+        const convos = {};
+        msgs.forEach(m => {
+            const isMeSender = m.gonderen_id === currentUserSession.user.id;
+            const otherUser = isMeSender ? m.alici : m.gonderen;
+            if (!convos[otherUser.id]) {
+                convos[otherUser.id] = { user: otherUser, lastMsg: m.metin || '📷 Görsel', date: new Date(m.created_at), isUnread: !isMeSender && !m.okundu, senderLabel: isMeSender ? 'Sen: ' : '' };
+            }
+        });
+
+        conversationsList.innerHTML = '';
+        Object.values(convos).forEach(c => {
+            const avatar = c.user.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(c.user.ad_soyad)}`;
+            const bgClass = c.isUnread ? 'bg-blue-50 border-blue-100' : 'bg-white border-white hover:bg-slate-50';
+            const textWeight = c.isUnread ? 'font-bold text-slate-800' : 'font-medium text-slate-500';
+            
+            conversationsList.insertAdjacentHTML('beforeend', `
+                <div class="p-3 flex items-center gap-3 cursor-pointer transition-colors border-b ${bgClass}" onclick="openChat('${c.user.id}', '${c.user.ad_soyad}', '${avatar}')">
+                    <img src="${avatar}" class="w-12 h-12 rounded-full object-cover flex-shrink-0 border border-slate-200">
+                    <div class="flex-1 overflow-hidden">
+                        <div class="font-bold text-sm text-slate-800">${c.user.ad_soyad}</div>
+                        <div class="text-[13px] truncate mt-0.5 ${textWeight}">${c.senderLabel}${c.lastMsg}</div>
+                    </div>
+                    ${c.isUnread ? '<span class="w-2.5 h-2.5 bg-blue-500 rounded-full"></span>' : ''}
+                </div>
+            `);
+        });
+    } catch (error) { conversationsList.innerHTML = '<p class="text-center text-red-500 mt-10">Yüklenemedi.</p>'; }
+}
+
+window.openChat = async (targetId, targetName, targetAvatar) => {
+    currentChatUserId = targetId;
+    chatDmName.innerText = targetName; chatDmAvatar.src = targetAvatar;
+    chatDmAvatar.setAttribute('data-user-id', targetId); chatDmName.setAttribute('data-user-id', targetId);
+    
+    chatModalDm.classList.remove('hidden'); setTimeout(() => chatModalDm.classList.remove('translate-x-full'), 10);
+    chatDmHistory.innerHTML = '<div class="flex-1 flex items-center justify-center"><i class="fa-solid fa-spinner fa-spin text-2xl text-slate-400"></i></div>';
+
+    try {
+        await supabase.from('mesajlar').update({ okundu: true }).eq('alici_id', currentUserSession.user.id).eq('gonderen_id', targetId).eq('okundu', false);
+        checkMessagesBadge();
+        if(!messagesListModal.classList.contains('hidden')) loadConversations();
+
+        const { data: history, error } = await supabase
+            .from('mesajlar')
+            .select('*')
+            .in('gonderen_id', [currentUserSession.user.id, targetId])
+            .in('alici_id', [currentUserSession.user.id, targetId])
+            .order('created_at', { ascending: true });
+
+        if (error) throw error;
+
+        chatDmHistory.innerHTML = '';
+        if (history && history.length > 0) {
+            history.forEach(msg => appendMessageToUI(msg, msg.gonderen_id === currentUserSession.user.id));
+        } else {
+            chatDmHistory.innerHTML = '<p id="empty-chat-msg" class="text-center text-slate-400 mt-10 text-sm">İlk mesajı sen gönder!</p>';
+        }
+        scrollToChatBottom();
+    } catch (error) { 
+        chatDmHistory.innerHTML = '<p class="text-center text-red-500 mt-10">Sohbet yüklenemedi.</p>'; 
+    }
+};
+
+function appendMessageToUI(msg, isMine) {
+    const emptyMsg = document.getElementById('empty-chat-msg');
+    if (emptyMsg) emptyMsg.remove();
+
+    const timeStr = new Date(msg.created_at).toLocaleTimeString('tr-TR', {hour: '2-digit', minute:'2-digit'});
+    const mediaHtml = msg.medya_url ? `<img src="${msg.medya_url}" class="w-full max-w-[200px] h-auto rounded-lg mb-1 pointer-events-none">` : '';
+    const textHtml = (msg.metin && msg.metin !== '📷 Görsel') ? `<div class="whitespace-pre-wrap leading-relaxed">${msg.metin}</div>` : '';
+    
+    const readHtml = isMine ? `<i class="msg-read-status fa-solid ${msg.okundu ? 'fa-check-double text-blue-500' : 'fa-check text-slate-400'} ml-1"></i>` : '';
+    const heartClass = msg.begendi ? 'scale-100 opacity-100' : 'scale-0 opacity-0';
+
+    if (isMine) {
+        chatDmHistory.insertAdjacentHTML('beforeend', `
+            <div class="flex flex-col items-end w-full animate-fade-in relative mb-3" id="msg-wrapper-${msg.id}">
+                <div class="msg-bubble relative bg-blue-600 text-white px-4 py-2.5 rounded-2xl rounded-br-sm max-w-[75%] text-[14px] shadow-sm cursor-pointer select-none" data-msg-id="${msg.id}" data-is-mine="true" data-is-liked="${!!msg.begendi}">
+                    ${mediaHtml}
+                    ${textHtml}
+                    <div class="msg-heart absolute -bottom-2 -left-2 bg-slate-800 rounded-full w-6 h-6 flex items-center justify-center shadow-md border-2 border-white transition-all duration-300 ${heartClass}"><i class="fa-solid fa-heart text-red-500 text-[11px]"></i></div>
+                </div>
+                <div class="flex items-center text-[10px] text-slate-400 mt-1 mr-1"><span>${timeStr}</span>${readHtml}</div>
+            </div>
+        `);
+    } else {
+        chatDmHistory.insertAdjacentHTML('beforeend', `
+            <div class="flex items-end gap-2 w-full animate-fade-in relative mb-3" id="msg-wrapper-${msg.id}">
+                <img src="${chatDmAvatar.src}" class="w-7 h-7 rounded-full object-cover mb-4 border border-slate-200">
+                <div class="flex flex-col items-start w-full">
+                    <div class="msg-bubble relative bg-white border border-slate-200 text-slate-800 px-4 py-2.5 rounded-2xl rounded-bl-sm max-w-[75%] text-[14px] shadow-sm cursor-pointer select-none" data-msg-id="${msg.id}" data-is-mine="false" data-is-liked="${!!msg.begendi}">
+                        ${mediaHtml}
+                        ${textHtml}
+                        <div class="msg-heart absolute -bottom-2 -right-2 bg-slate-800 rounded-full w-6 h-6 flex items-center justify-center shadow-md border-2 border-white transition-all duration-300 ${heartClass}"><i class="fa-solid fa-heart text-red-500 text-[11px]"></i></div>
+                    </div>
+                    <span class="text-[10px] text-slate-400 mt-1 ml-1">${timeStr}</span>
+                </div>
+            </div>
+        `);
+    }
+    scrollToChatBottom();
+}
+
+function scrollToChatBottom() { chatDmHistory.scrollTop = chatDmHistory.scrollHeight; }
+
+closeChatDmBtn.addEventListener('click', () => {
+    currentChatUserId = null;
+    chatModalDm.classList.add('translate-x-full'); setTimeout(() => chatModalDm.classList.add('hidden'), 300);
+});
+
+chatDmInput.addEventListener('input', () => {
+    if(currentChatUserId && chatBroadcastChannel) {
+        chatBroadcastChannel.send({ type: 'broadcast', event: 'typing', payload: { from: currentUserSession.user.id, to: currentChatUserId } });
+    }
+});
+
+chatDmForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const text = chatDmInput.value.trim();
+    if (!currentChatUserId || !text) return;
+    chatDmInput.value = ''; 
+    
+    try {
+        const { error } = await supabase.from('mesajlar').insert([{ gonderen_id: currentUserSession.user.id, alici_id: currentChatUserId, metin: text }]);
+        if (error) throw error;
+        if(!messagesListModal.classList.contains('hidden')) loadConversations();
+    } catch (err) { Swal.fire({ icon: 'error', title: 'Hata', text: 'Mesaj iletilemedi.' }); }
+});
+
+chatDmMediaInput.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if(!file || !currentChatUserId) return;
+    e.target.value = ''; 
+    
+    chatDmHistory.insertAdjacentHTML('beforeend', `<div class="text-center text-xs text-slate-400 my-2" id="img-upload-loading">Fotoğraf gönderiliyor...</div>`);
+    scrollToChatBottom();
+
+    try {
+        const ext = file.name.split('.').pop();
+        const fileName = `dm-${Date.now()}.${ext}`;
+        const { error: uploadError } = await supabase.storage.from('medya').upload(fileName, file);
+        if(uploadError) throw uploadError;
+        
+        const finalMediaUrl = supabase.storage.from('medya').getPublicUrl(fileName).data.publicUrl;
+        await supabase.from('mesajlar').insert([{ gonderen_id: currentUserSession.user.id, alici_id: currentChatUserId, metin: '📷 Görsel', medya_url: finalMediaUrl }]);
+    } catch(err) {
+        Swal.fire({icon:'error', text:'Görsel gönderilemedi'});
+    } finally {
+        const loader = document.getElementById('img-upload-loading');
+        if(loader) loader.remove();
+    }
+});
+
+let msgPressTimer;
+chatDmHistory.addEventListener('mousedown', handleMsgPressStart);
+chatDmHistory.addEventListener('touchstart', handleMsgPressStart);
+chatDmHistory.addEventListener('mouseup', handleMsgPressEnd);
+chatDmHistory.addEventListener('mouseleave', handleMsgPressEnd);
+chatDmHistory.addEventListener('touchend', handleMsgPressEnd);
+chatDmHistory.addEventListener('touchmove', handleMsgPressEnd);
+
+function handleMsgPressStart(e) {
+    const bubble = e.target.closest('.msg-bubble');
+    if(bubble) {
+        const msgId = bubble.getAttribute('data-msg-id');
+        const isMine = bubble.getAttribute('data-is-mine') === 'true';
+        msgPressTimer = setTimeout(() => {
+            if(isMine) {
+                Swal.fire({title: 'Mesajı Sil?', icon: 'warning', showCancelButton:true, confirmButtonText:'Sil', cancelButtonText:'İptal', confirmButtonColor: '#d33'}).then(async res => {
+                    if(res.isConfirmed) {
+                        const wrapper = document.getElementById(`msg-wrapper-${msgId}`);
+                        if(wrapper) {
+                            wrapper.style.opacity = '0';
+                            setTimeout(() => wrapper.remove(), 200);
+                        }
+                        await supabase.from('mesajlar').delete().eq('id', msgId);
+                    }
+                })
+            }
+        }, 600); 
+    }
+}
+function handleMsgPressEnd() { clearTimeout(msgPressTimer); }
+
+chatDmHistory.addEventListener('dblclick', async (e) => {
+    const bubble = e.target.closest('.msg-bubble');
+    if(bubble) {
+        if(window.getSelection) window.getSelection().removeAllRanges();
+        const msgId = bubble.getAttribute('data-msg-id');
+        const isLiked = bubble.getAttribute('data-is-liked') === 'true';
+        
+        bubble.setAttribute('data-is-liked', (!isLiked).toString());
+        const heart = bubble.querySelector('.msg-heart');
+        
+        if(!isLiked) { 
+            heart.classList.remove('scale-0', 'opacity-0');
+            heart.classList.add('scale-100', 'opacity-100', 'chat-heart-anim');
+        } else { 
+            heart.classList.remove('scale-100', 'opacity-100', 'chat-heart-anim');
+            heart.classList.add('scale-0', 'opacity-0');
+        }
+
+        await supabase.from('mesajlar').update({begendi: !isLiked}).eq('id', msgId);
+    }
+});
